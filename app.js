@@ -52,8 +52,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes); // Applications endpoint
 app.use('/api/job-applications', applicationRoutes);
 app.use("/api/uploads", uploadRoutes);
-
-
+app.use("/api", jobRoutes);
 
 
 // Connect to MongoDB

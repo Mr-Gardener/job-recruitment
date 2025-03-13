@@ -1,4 +1,15 @@
-const Job = require('../controller/jobApplicationController');
+const Job = require('../models/Job');
+
+// Add a function to fetch all jobs
+const getJobs = async (req, res) => {
+    try {
+        const jobs = await Job.find();
+        res.status(200).json(jobs);
+    } catch (err) {
+        console.error('Error fetching jobs:', err);
+        res.status(500).json({ message: 'Failed to fetch jobs' });
+    }
+};
 
 const addJob = async (req, res) => {
     console.log('Request received to add a job'); // Debugging message
@@ -21,4 +32,4 @@ const addJob = async (req, res) => {
     }
 };
 
-module.exports = { addJob };
+module.exports = { addJob, getJobs };

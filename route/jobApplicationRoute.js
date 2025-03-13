@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
+const multer = require('multer');
+const {authMiddleware} = require('../middleware/authMiddleware');
 const { 
     applyForJob, 
     updateApplicationStatus, 
@@ -8,7 +9,17 @@ const {
     getUserApplications, 
     deleteApplication
 } = require('../controller/jobApplicationController');
+console.log({ getAllApplications });
 
+// Configure file storage for resumes
+const storage = multer.diskStorage({
+    destination: './uploads/', // Save resumes in "uploads" folder
+    filename: (req, file, cb) => {
+      cb(null, `${Date.now()}-${file.originalname}`);
+    },
+  });
+  
+  const upload = multer({ storage });
 
 // Debugging middleware
 router.use((req, res, next) => {
@@ -20,8 +31,9 @@ router.get("/protected-route", authMiddleware, (req, res) => {
     res.json({ message: "Access granted!" });
 });
 
+
 // Job application endpoint
-router.post('/', authMiddleware, applyForJob);
+router.post('/', authMiddleware, upload.single('resume'), applyForJob);
 
 // Route for employers to update application status
 router.patch('/:id', authMiddleware, updateApplicationStatus);

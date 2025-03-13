@@ -1,17 +1,72 @@
 const express = require("express");
-const { addJob } = require('../controller/jobController'); // Import addJob function
+const { addJob, getJobs } = require('../controller/jobController'); // Import addJob function
 const Job = require("../models/Job");
+const { authMiddleware } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
 router.use((req, res, next) => {
-  console.log(`${req.method} request made to: ${req.url}`);
+    console.log(`Incoming request: ${req.method} ${req.originalUrl}`);
   next(); // This allows the request to continue to the next middleware/handler
 });
   
+// Add logging inside the authMiddleware
+router.use((req, res, next) => {
+  const token = req.headers['authorization'];
+  console.log('🔑 Received Token:', token);
 
-  // Route to add a job
-router.post('/', addJob);
+  if (!token) {
+      console.log('❌ No token provided');
+      return res.status(401).json({ message: 'No token provided' });
+  }
+  next();
+});
+
+// Route to add a job
+router.post('/jobs', authMiddleware, (req, res) => {
+  console.log('📩 POST request to /jobs');
+  console.log('Request body:', req.body);
+  console.log('User:', req.user); // Log user data to verify role
+
+  if (req.user.role !== 'employer') {
+      console.log('⛔ Access denied: Only employers can post jobs');
+      return res.status(403).json({ message: 'Only employers can post jobs' });
+  }
+
+  const { title, company, location, salary, description, requirements, industry } = req.body;
+
+  if (!title || !company || !location || !description) {
+      console.log('⚠️ Missing fields in job data');
+      return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  const newJob = new Job({ title, company, location, salary, description, requirements, industry });
+
+  newJob.save()
+      .then(() => {
+          console.log('✅ Job posted successfully');
+          res.status(201).json({ message: 'Job posted successfully' });
+      })
+      .catch((error) => {
+          console.error('❗ Failed to post job:', error);
+          res.status(500).json({ message: 'Failed to post job', error });
+      });
+});
+
+
+// Route to get all jobs
+router.get('/jobs', async (req, res) => {
+    try {
+      const jobs = await Job.find();
+      res.json(jobs);
+    } catch (error) {
+      console.error('Failed to fetch jobs:', error);
+      res.status(500).json({ message: 'Failed to fetch jobs' });
+    }
+  });
+  
+
+  
   
 //Route to search for job
 router.get('/search', async (req, res) => {

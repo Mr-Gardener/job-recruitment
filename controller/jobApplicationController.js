@@ -1,22 +1,46 @@
 const JobApplication = require('../models/jobApplication');
+const Job = require('../models/Job');
+
+
+const getPublicJobListings = async (req, res) => {
+  try {
+    const jobs = await Job.find({}, 'title company location description');
+    res.status(200).json(jobs);
+  } catch (err) {
+    console.error('Error fetching job listings:', err);
+    res.status(500).json({ message: 'Failed to fetch job listings', error: err.message });
+  }
+};
 
 const applyForJob = async (req, res) => {
-   try { 
-  const { jobId, applicantName, email, resume, coverLetter } = req.body;
-  const userId = req.user.id; // Get userId from authenticated request
+  try {
+    // Extract form fields from the request
+    const { jobId, applicantName, email, coverLetter } = req.body;
+    const userId = req.user.id;
 
-  // Basic validation 
-  if (!jobId || !applicantName || !email || !resume) {
-    return res.status(400).json({ message: 'jobId, applicantName, email, and resume are required.' });
-  }
+    // Handle file upload (from multer)
+    const resumeFile = req.file;
 
-  
+    if (!jobId || !applicantName || !email || !resumeFile) {
+      return res.status(400).json({ message: 'jobId, applicantName, email, and resume are required.' });
+    }
+
+    // Prevent duplicate applications
+    const existingApplication = await JobApplication.findOne({ jobId, userId });
+    if (existingApplication) {
+      return res.status(409).json({ message: 'You have already applied for this job.' });
+    }
+
+    // Trim inputs and normalize email
+    const cleanedEmail = email.trim().toLowerCase();
+    const sanitizedName = applicantName.trim();
+
     const newApplication = new JobApplication({
       jobId,
       userId,
-      applicantName,
-      email,
-      resume,
+      applicantName: sanitizedName,
+      email: cleanedEmail,
+      resume: resumeFile.path, // Save file path or URL
       coverLetter
     });
 
@@ -24,97 +48,131 @@ const applyForJob = async (req, res) => {
     res.status(201).json({ message: 'Application submitted successfully.', application: newApplication });
   } catch (err) {
     console.error('Error applying for job:', err);
-    res.status(500).json({ message: 'Failed to apply for job.' });
+    res.status(500).json({ message: 'Failed to apply for job.', error: err.message });
   }
 };
 
 
-// Update job application status
+
+// Update job application status to either 'pending', 'reviewed', 'accepted', 'rejected'
 const updateApplicationStatus = async (req, res) => {
   try {
-      const { id } = req.params; // Get application ID from request URL
-      const { status } = req.body; // Get new status from request body
+    const { id } = req.params;
+    const { status } = req.body;
 
-      // Find the job application by ID and update the status
-      const application = await JobApplication.findByIdAndUpdate(
-          id,
-          { status },
-          { new: true } // Return the updated document
-      );
+    // Validate status values
+    const validStatuses = ['pending', 'reviewed', 'accepted', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid status value." });
+    }
 
-      if (!application) {
-          return res.status(404).json({ message: "Application not found" });
-      }
+    const application = await JobApplication.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
 
-      res.status(200).json({ message: "Application status updated successfully", application });
+    if (!application) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    res.status(200).json({ message: "Application status updated successfully", application });
   } catch (error) {
-      console.error("Error updating application status:", error);
-      res.status(500).json({ message: "Error updating application status", error });
+    console.error("Error updating application status:", error);
+    res.status(500).json({ message: "Error updating application status", error: error.message });
   }
 };
+
 
 // 📜 Get all job applications (Admin or Employer)
 const getAllApplications = async (req, res) => {
   try {
-      const user = req.user; // Extracted from authMiddleware
+    const user = req.user;
+    if (!user || (user.role !== 'employer' && user.role !== 'admin')) {
+      return res.status(403).json({ message: "Access denied. Only employers or admins can view applications." });
+    }
 
-      // Check if the user is an employer or admin
-      if (user.role !== 'employer' && user.role !== 'admin') {
-          return res.status(403).json({ message: "Access denied. Only employers or admins can view applications." });
-      }
+    // Add pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
-      const applications = await JobApplication.find().populate('jobId userId', 'title name email');
-      res.json({ applications });
+    const applications = await JobApplication.find()
+      .populate('jobId', 'title')
+      .populate('userId', 'name email')
+      .select('-__v') // Exclude MongoDB version key
+      .skip(skip)
+      .limit(limit);
+
+    const totalApplications = await JobApplication.countDocuments();
+
+    res.json({
+      applications,
+      page,
+      totalPages: Math.ceil(totalApplications / limit),
+    });
   } catch (error) {
-      res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 // Get all job applications for a specific user
 const getUserApplications = async (req, res) => {
   try {
-      const userId = req.user.id; // Extract user ID from the token
+    const userId = req.user.id;
 
-      const applications = await JobApplication.find({ userId });
+    const applications = await JobApplication.find({ userId })
+      .populate('jobId', 'title companyName')
+      .select('jobId status createdAt updatedAt');
 
-      if (!applications.length) {
-          return res.status(404).json({ message: "No applications found for this user." });
-      }
+    if (!applications.length) {
+      return res.status(404).json({ message: "No applications found for this user." });
+    }
 
-      res.json(applications);
+    res.json(applications);
   } catch (error) {
-      res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 // Delete a job application
 const deleteApplication = async (req, res) => {
   try {
-      const applicationId = req.params.id;
-      const userId = req.user.id; // Extracted from the token
+    const applicationId = req.params.id;
+    const userId = req.user.id;
 
-      const application = await JobApplication.findById(applicationId);
-      if (!application) {
-          return res.status(404).json({ message: "Job application not found." });
-      }
+    const application = await JobApplication.findById(applicationId);
+    if (!application) {
+      return res.status(404).json({ message: "Job application not found." });
+    }
 
-      // Only the applicant or an admin can delete the application
-      if (application.userId.toString() !== userId && req.user.role !== "admin") {
-          return res.status(403).json({ message: "Unauthorized to delete this application." });
-      }
+    if (application.userId.toString() !== userId && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Unauthorized to delete this application." });
+    }
 
-      await application.deleteOne();
-      res.json({ message: "Job application deleted successfully." });
+    // Soft delete approach (optional)
+    // application.deleted = true;
+    // await application.save();
+
+    await application.deleteOne();
+    res.json({ message: "Job application deleted successfully." });
 
   } catch (error) {
-      res.status(500).json({ message: "Server error." });
+    res.status(500).json({ message: "Server error.", error: error.message });
   }
 };
 
+
 module.exports = {
+  getPublicJobListings,
   applyForJob,
   updateApplicationStatus, 
   getAllApplications,
   getUserApplications, 
   deleteApplication
 };
+
+
+
